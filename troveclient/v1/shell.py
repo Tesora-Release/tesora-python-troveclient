@@ -1295,17 +1295,31 @@ def do_configuration_patch(cs, args):
 
 @utils.arg('configuration_group', metavar='<configuration_group>',
            help='ID of the configuration group.')
+@utils.arg('--limit', metavar='<limit>', type=int, default=None,
+           help='Limit the number of results displayed.')
+@utils.arg('--marker', metavar='<ID>', type=str, default=None,
+           help='Begin displaying the results for IDs greater than the '
+                'specified marker. When used with --limit, set this to '
+                'the last ID displayed in the previous run.')
 @utils.service_type('database')
 def do_configuration_instances(cs, args):
     """Lists all instances associated with a configuration group."""
-    params = cs.configurations.instances(args.configuration_group)
+    params = cs.configurations.instances(args.configuration_group,
+                                         limit=args.limit,
+                                         marker=args.marker)
     utils.print_list(params, ['id', 'name'])
 
 
+@utils.arg('--limit', metavar='<limit>', type=int, default=None,
+           help='Limit the number of results displayed.')
+@utils.arg('--marker', metavar='<ID>', type=str, default=None,
+           help='Begin displaying the results for IDs greater than the '
+                'specified marker. When used with --limit, set this to '
+                'the last ID displayed in the previous run.')
 @utils.service_type('database')
 def do_configuration_list(cs, args):
     """Lists all configuration groups."""
-    config_grps = cs.configurations.list()
+    config_grps = cs.configurations.list(limit=args.limit, marker=args.marker)
     utils.print_list(config_grps, [
         'id', 'name', 'description',
         'datastore_name', 'datastore_version_name'])
