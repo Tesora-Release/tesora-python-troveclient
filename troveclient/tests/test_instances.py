@@ -98,7 +98,9 @@ class InstancesTest(testtools.TestCase):
                                         ['db1', 'db2'], ['u1', 'u2'],
                                         datastore="datastore",
                                         datastore_version="datastore-version",
-                                        nics=nics)
+                                        nics=nics,
+                                        replica_count=4,
+                                        locality='affinity')
         self.assertEqual("/instances", p)
         self.assertEqual("instance", i)
         self.assertEqual(['db1', 'db2'], b["instance"]["databases"])
@@ -110,6 +112,8 @@ class InstancesTest(testtools.TestCase):
                          b["instance"]["datastore"]["version"])
         self.assertEqual(nics, b["instance"]["nics"])
         self.assertEqual(103, b["instance"]["flavorRef"])
+        self.assertEqual(4, b["instance"]["replica_count"])
+        self.assertEqual('affinity', b["instance"]["locality"])
 
     def test_list(self):
         page_mock = mock.Mock()
@@ -223,6 +227,16 @@ class InstancesTest(testtools.TestCase):
         self.instances.edit(self.instance_with_id, 123, 'name-1234', True)
         resp.status_code = 500
         self.assertRaises(Exception, self.instances.edit, 'instance1')
+
+    def test_upgrade(self):
+        resp = mock.Mock()
+        resp.status_code = 200
+        body = None
+        self.instances.api.client.patch = mock.Mock(return_value=(resp, body))
+        self.instances.upgrade(self.instance_with_id, "5.6")
+        resp.status_code = 500
+        self.assertRaises(Exception, self.instances.upgrade,
+                          'instance1')
 
     def test_configuration(self):
         def side_effect_func(path, inst):

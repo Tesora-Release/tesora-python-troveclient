@@ -76,7 +76,8 @@ class Instances(base.ManagerWithFind):
     def create(self, name, flavor_id, volume=None, databases=None, users=None,
                restorePoint=None, availability_zone=None, datastore=None,
                datastore_version=None, nics=None, configuration=None,
-               replica_of=None, slave_of=None, replica_count=None):
+               replica_of=None, slave_of=None, replica_count=None,
+               locality=None):
         """Create (boot) a new instance."""
 
         body = {"instance": {
@@ -108,6 +109,8 @@ class Instances(base.ManagerWithFind):
             body["instance"]["replica_of"] = base.getid(replica_of) or slave_of
         if replica_count:
             body["instance"]["replica_count"] = replica_count
+        if locality:
+            body["instance"]["locality"] = locality
 
         return self._create("/instances", body, "instance")
 
@@ -142,6 +145,18 @@ class Instances(base.ManagerWithFind):
             # (see trove.instance.service.InstanceController#edit)
             body["instance"]["slave_of"] = None
             body["instance"]["replica_of"] = None
+
+        url = "/instances/%s" % base.getid(instance)
+        resp, body = self.api.client.patch(url, body=body)
+        common.check_for_exceptions(resp, body, url)
+
+    def upgrade(self, instance, datastore_version):
+        """Upgrades an instance with a new datastore version."""
+        body = {
+            "instance": {
+                "datastore_version": datastore_version
+            }
+        }
 
         url = "/instances/%s" % base.getid(instance)
         resp, body = self.api.client.patch(url, body=body)

@@ -24,6 +24,8 @@ INSTANCE_ERROR = ("Instance argument(s) must be of the form --instance "
 NIC_ERROR = ("Invalid NIC argument: %s. Must specify either net-id or port-id "
              "but not both. Please refer to help.")
 NO_LOG_FOUND_ERROR = "ERROR: No published '%s' log was found for %s."
+LOCALITY_DOMAIN = ['affinity', 'anti-affinity']
+LOCALITY_DOMAIN_MSG = "Must be one of ['%s']" % "', '".join(LOCALITY_DOMAIN)
 
 try:
     import simplejson as json
@@ -435,22 +437,41 @@ def do_update(cs, args):
 @utils.arg('--replica_count',
            metavar='<count>',
            type=int,
-           default=1,
-           help='Number of replicas to create (defaults to 1).')
+           default=None,
+           help='Number of replicas to create (defaults to 1 if replica_of '
+                'specified).')
+@utils.arg('--locality',
+           metavar='<policy>',
+           default=None,
+           help='Locality policy to use when creating replicas. %s' %
+           LOCALITY_DOMAIN_MSG)
 @utils.service_type('database')
 def do_create(cs, args):
     """Creates a new instance."""
-    volume = None
-    replica_of_instance = None
     flavor_id = _find_flavor(cs, args.flavor).id
+    volume = None
     if args.size:
         volume = {"size": args.size,
                   "type": args.volume_type}
     restore_point = None
     if args.backup:
         restore_point = {"backupRef": args.backup}
+    replica_count = args.replica_count
+    replica_of = None
     if args.replica_of:
-        replica_of_instance = _find_instance(cs, args.replica_of)
+        replica_of = _find_instance(cs, args.replica_of)
+        replica_count = replica_count or 1
+    locality = None
+    if args.locality:
+        locality = args.locality
+        if locality not in LOCALITY_DOMAIN:
+            raise exceptions.ValidationError(
+                "Locality '%s' not supported. %s" %
+                (locality, LOCALITY_DOMAIN_MSG))
+        if replica_of:
+            raise exceptions.ValidationError(
+                'Cannot specify locality when adding replicas to existing '
+                'master.')
     databases = [{'name': value} for value in args.databases]
     users = [{'name': n, 'password': p, 'databases': databases} for (n, p) in
              [z.split(':')[:2] for z in args.users]]
@@ -472,8 +493,9 @@ def do_create(cs, args):
                                    datastore_version=args.datastore_version,
                                    nics=nics,
                                    configuration=args.configuration,
-                                   replica_of=replica_of_instance,
-                                   replica_count=args.replica_count)
+                                   replica_of=replica_of,
+                                   replica_count=replica_count,
+                                   locality=locality)
     _print_instance(instance)
 
 
@@ -637,6 +659,20 @@ def do_resize_instance(cs, args):
     instance = _find_instance(cs, args.instance)
     flavor_id = _find_flavor(cs, args.flavor).id
     cs.instances.resize_instance(instance, flavor_id)
+
+
+@utils.arg('instance',
+           metavar='<instance>',
+           type=str,
+           help='ID or name of the instance.')
+@utils.arg('datastore_version',
+           metavar='<datastore_version>',
+           help='A datastore version name or ID.')
+@utils.service_type('database')
+def do_upgrade(cs, args):
+    """Upgrades an instance to a new datastore version."""
+    instance = _find_instance(cs, args.instance)
+    cs.instances.upgrade(instance, args.datastore_version)
 
 
 @utils.arg('instance',
@@ -1295,17 +1331,31 @@ def do_configuration_patch(cs, args):
 
 @utils.arg('configuration_group', metavar='<configuration_group>',
            help='ID of the configuration group.')
+@utils.arg('--limit', metavar='<limit>', type=int, default=None,
+           help='Limit the number of results displayed.')
+@utils.arg('--marker', metavar='<ID>', type=str, default=None,
+           help='Begin displaying the results for IDs greater than the '
+                'specified marker. When used with --limit, set this to '
+                'the last ID displayed in the previous run.')
 @utils.service_type('database')
 def do_configuration_instances(cs, args):
     """Lists all instances associated with a configuration group."""
-    params = cs.configurations.instances(args.configuration_group)
+    params = cs.configurations.instances(args.configuration_group,
+                                         limit=args.limit,
+                                         marker=args.marker)
     utils.print_list(params, ['id', 'name'])
 
 
+@utils.arg('--limit', metavar='<limit>', type=int, default=None,
+           help='Limit the number of results displayed.')
+@utils.arg('--marker', metavar='<ID>', type=str, default=None,
+           help='Begin displaying the results for IDs greater than the '
+                'specified marker. When used with --limit, set this to '
+                'the last ID displayed in the previous run.')
 @utils.service_type('database')
 def do_configuration_list(cs, args):
     """Lists all configuration groups."""
-    config_grps = cs.configurations.list()
+    config_grps = cs.configurations.list(limit=args.limit, marker=args.marker)
     utils.print_list(config_grps, [
         'id', 'name', 'description',
         'datastore_name', 'datastore_version_name'])
