@@ -25,7 +25,6 @@ NIC_ERROR = ("Invalid NIC argument: %s. Must specify either net-id or port-id "
              "but not both. Please refer to help.")
 NO_LOG_FOUND_ERROR = "ERROR: No published '%s' log was found for %s."
 LOCALITY_DOMAIN = ['affinity', 'anti-affinity']
-LOCALITY_DOMAIN_MSG = "Must be one of ['%s']" % "', '".join(LOCALITY_DOMAIN)
 
 try:
     import simplejson as json
@@ -135,6 +134,11 @@ def _find_flavor(cs, flavor):
     return utils.find_resource(cs.flavors, flavor)
 
 
+def _find_volume_type(cs, volume_type):
+    """Get a volume type by ID."""
+    return utils.find_resource(cs.volume_types, volume_type)
+
+
 def _find_backup(cs, backup):
     """Get a backup by ID."""
     return utils.find_resource(cs.backups, backup)
@@ -175,6 +179,38 @@ def do_flavor_show(cs, args):
     """Shows details of a flavor."""
     flavor = _find_flavor(cs, args.flavor)
     _print_object(flavor)
+
+
+# Volume type related calls
+@utils.arg('--datastore_type', metavar='<datastore_type>',
+           default=None,
+           help='Type of the datastore. For eg: mysql.')
+@utils.arg("--datastore_version_id", metavar="<datastore_version_id>",
+           default=None, help="ID of the datastore version.")
+@utils.service_type('database')
+def do_volume_type_list(cs, args):
+    """Lists available volume types."""
+    if args.datastore_type and args.datastore_version_id:
+        volume_types = cs.volume_types.\
+            list_datastore_version_associated_volume_types(
+                args.datastore_type, args.datastore_version_id
+            )
+    elif not args.datastore_type and not args.datastore_version_id:
+        volume_types = cs.volume_types.list()
+    else:
+        raise exceptions.MissingArgs(['datastore_type',
+                                      'datastore_version_id'])
+
+    utils.print_list(volume_types, ['id', 'name', 'is_public', 'description'])
+
+
+@utils.arg('volume_type', metavar='<volume_type>',
+           help='ID or name of the volume type.')
+@utils.service_type('database')
+def do_volume_type_show(cs, args):
+    """Shows details of a volume type."""
+    volume_type = _find_volume_type(cs, args.volume_type)
+    _print_object(volume_type)
 
 
 # Instance related calls
@@ -443,8 +479,9 @@ def do_update(cs, args):
 @utils.arg('--locality',
            metavar='<policy>',
            default=None,
-           help='Locality policy to use when creating replicas. %s' %
-           LOCALITY_DOMAIN_MSG)
+           choices=LOCALITY_DOMAIN,
+           help='Locality policy to use when creating replicas. Choose '
+                'one of %(choices)s.')
 @utils.service_type('database')
 def do_create(cs, args):
     """Creates a new instance."""
@@ -464,10 +501,6 @@ def do_create(cs, args):
     locality = None
     if args.locality:
         locality = args.locality
-        if locality not in LOCALITY_DOMAIN:
-            raise exceptions.ValidationError(
-                "Locality '%s' not supported. %s" %
-                (locality, LOCALITY_DOMAIN_MSG))
         if replica_of:
             raise exceptions.ValidationError(
                 'Cannot specify locality when adding replicas to existing '
@@ -610,6 +643,12 @@ def _get_instance_property(instance_str, property_name, is_required=True,
            action='append',
            dest='instances',
            default=[])
+@utils.arg('--locality',
+           metavar='<policy>',
+           default=None,
+           choices=LOCALITY_DOMAIN,
+           help='Locality policy to use when creating cluster. Choose '
+                'one of %(choices)s.')
 @utils.service_type('database')
 def do_cluster_create(cs, args):
     """Creates a new cluster."""
@@ -636,7 +675,8 @@ def do_cluster_create(cs, args):
     cluster = cs.clusters.create(args.name,
                                  args.datastore,
                                  args.datastore_version,
-                                 instances=instances)
+                                 instances=instances,
+                                 locality=args.locality)
     cluster._info['task_name'] = cluster.task['name']
     cluster._info['task_description'] = cluster.task['description']
     del cluster._info['task']

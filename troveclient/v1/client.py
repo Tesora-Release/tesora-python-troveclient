@@ -28,6 +28,7 @@ from troveclient.v1 import metadata
 from troveclient.v1 import root
 from troveclient.v1 import security_groups
 from troveclient.v1 import users
+from troveclient.v1 import volume_types
 
 
 class Client(object):
@@ -61,6 +62,7 @@ class Client(object):
 
         # extensions
         self.flavors = flavors.Flavors(self)
+        self.volume_types = volume_types.VolumeTypes(self)
         self.users = users.Users(self)
         self.databases = databases.Databases(self)
         self.backups = backups.Backups(self)
