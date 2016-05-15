@@ -86,6 +86,11 @@ def _print_instance(instance):
     if hasattr(instance, 'replicas'):
         replicas = [replica['id'] for replica in instance.replicas]
         info['replicas'] = ', '.join(replicas)
+    if hasattr(instance, 'fault'):
+        info.pop('fault', None)
+        info['fault'] = instance.fault['message']
+        info['fault_date'] = instance.fault['created']
+        info['fault_details'] = instance.fault['details']
     info.pop('links', None)
     utils.print_dict(info)
 
@@ -310,12 +315,17 @@ def do_cluster_instances(cs, args):
 
 
 @utils.arg('--instance',
-           metavar="<name=name,flavor=flavor_name_or_id,volume=volume>",
+           metavar="<opt=value,opt=value,...>",
            action='append',
            dest='instances',
            default=[],
            help="Add an instance to the cluster. Specify "
-                "multiple times to create multiple instances.")
+                "multiple times to create multiple instances.  "
+                "Valid options are: flavor=flavor_name_or_id, "
+                "volume=disk_size_in_GB, name=name, "
+                "nic='net-id=net-uuid,v4-fixed-ip=ip-addr,port-id=port-uuid' "
+                "(where net-id=network_id, v4-fixed-ip=IPv4r_fixed_address, "
+                "port-id=port_id), availability_zone=AZ_hint_for_Nova.")
 @utils.arg('cluster', metavar='<cluster>', help='ID or name of the cluster.')
 @utils.service_type('database')
 def do_cluster_grow(cs, args):
@@ -665,7 +675,7 @@ def do_cluster_create(cs, args):
 
         availability_zones = _get_availability_zones(instance_str)
         if availability_zones:
-            instance_info["availability-zone"] = availability_zones
+            instance_info["availability_zone"] = availability_zones
 
         instances.append(instance_info)
 
