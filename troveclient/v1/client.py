@@ -25,9 +25,11 @@ from troveclient.v1 import instances
 from troveclient.v1 import limits
 # from troveclient.v1 import management
 from troveclient.v1 import metadata
+from troveclient.v1 import modules
 from troveclient.v1 import root
 from troveclient.v1 import security_groups
 from troveclient.v1 import users
+from troveclient.v1 import volume_types
 
 
 class Client(object):
@@ -61,6 +63,7 @@ class Client(object):
 
         # extensions
         self.flavors = flavors.Flavors(self)
+        self.volume_types = volume_types.VolumeTypes(self)
         self.users = users.Users(self)
         self.databases = databases.Databases(self)
         self.backups = backups.Backups(self)
@@ -76,6 +79,7 @@ class Client(object):
         config_parameters = configurations.ConfigurationParameters(self)
         self.configuration_parameters = config_parameters
         self.metadata = metadata.Metadata(self)
+        self.modules = modules.Modules(self)
 
         # self.hosts = Hosts(self)
         # self.quota = Quotas(self)

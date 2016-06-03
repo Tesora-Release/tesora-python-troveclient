@@ -35,16 +35,32 @@ def assert_has_keys(dict, required=[], optional=[]):
 
 class FakeClient(client.Client):
 
+    URL_QUERY_SEPARATOR = '&'
+    URL_SEPARATOR = '?'
+
     def __init__(self, *args, **kwargs):
         client.Client.__init__(self, 'username', 'password',
                                'project_id', 'auth_url',
                                extensions=kwargs.get('extensions'))
         self.client = FakeHTTPClient(**kwargs)
 
+    def _order_url_query_str(self, url):
+        """Returns the url with the query strings ordered, if they exist and
+        there's more than one. Otherwise the url is returned unaltered.
+        """
+        if self.URL_QUERY_SEPARATOR in url:
+            parts = url.split(self.URL_SEPARATOR)
+            if len(parts) == 2:
+                queries = sorted(parts[1].split(self.URL_QUERY_SEPARATOR))
+                url = self.URL_SEPARATOR.join(
+                    [parts[0], self.URL_QUERY_SEPARATOR.join(queries)])
+        return url
+
     def assert_called(self, method, url, body=None, pos=-1):
         """Assert than an API method was just called."""
-        expected = (method, url)
-        called = self.client.callstack[pos][0:2]
+        expected = (method, utils.order_url(url))
+        called = (self.client.callstack[pos][0],
+                  utils.order_url(self.client.callstack[pos][1]))
 
         assert self.client.callstack, \
             "Expected %s %s but no calls were made." % expected
@@ -59,14 +75,14 @@ class FakeClient(client.Client):
 
     def assert_called_anytime(self, method, url, body=None):
         """Assert than an API method was called anytime in the test."""
-        expected = (method, url)
+        expected = (method, utils.order_url(url))
 
         assert self.client.callstack, \
             "Expected %s %s but no calls were made." % expected
 
         found = False
         for entry in self.client.callstack:
-            if expected == entry[0:2]:
+            if expected == (entry[0], utils.order_url(entry[1])):
                 found = True
                 break
 
@@ -148,6 +164,7 @@ class FakeHTTPClient(base_client.HTTPClient):
                 "ip": ["10.0.0.13"],
                 "volume": {"size": 2},
                 "flavor": {"id": "2"},
+                "region": "regionOne",
                 "datastore": {"version": "5.6", "type": "mysql"}},
             {
                 "id": "5678",
@@ -156,6 +173,7 @@ class FakeHTTPClient(base_client.HTTPClient):
                 "ip": ["10.0.0.14"],
                 "volume": {"size": 2},
                 "flavor": {"id": "2"},
+                "region": "regionOne",
                 "datastore": {"version": "5.6", "type": "mysql"}}]})
 
     def get_instances_1234(self, **kw):
@@ -221,6 +239,22 @@ class FakeHTTPClient(base_client.HTTPClient):
     def get_flavors_m1_uuid(self, **kw):
         r = {'flavor': self.get_flavors()[2]['flavors'][4]}
         return (200, {}, r)
+
+    def get_volume_types(self, **kw):
+        return (200, {}, {"volume_types": [
+            {
+                'id': 1,
+                'name': "test_volume_type",
+                'is_public': False,
+                'description': "Test"
+            }]})
+
+    def get_volume_types_1(self, **kw):
+        r = {'volume_type': self.get_volume_types()[2]['volume_types'][0]}
+        return (200, {}, r)
+
+    def get_datastores_mysql_versions_some_version_id_volume_types(self, **kw):
+        return self.get_volume_types()
 
     def get_clusters(self, **kw):
         return (200, {}, {"clusters": [
@@ -389,6 +423,67 @@ class FakeHTTPClient(base_client.HTTPClient):
     def get_instances_1234_metadata_key123(self, **kw):
         return (200, {}, {"metadata": {}})
 
+    def get_modules(self, **kw):
+        return (200, {}, {"modules": [
+            {
+                "id": "4321",
+                "name": "mod1",
+                "type": "ping",
+                "datastore": 'all',
+                "datastore_version": 'all',
+                "tenant": 'all',
+                "auto_apply": 0,
+                "visible": 1},
+            {
+                "id": "8765",
+                "name": "mod2",
+                "type": "ping",
+                "datastore": 'all',
+                "datastore_version": 'all',
+                "tenant": 'all',
+                "auto_apply": 0,
+                "visible": 1}]})
+
+    def get_modules_4321(self, **kw):
+        r = {'module': self.get_modules()[2]['modules'][0]}
+        return (200, {}, r)
+
+    def get_modules_8765(self, **kw):
+        r = {'module': self.get_modules()[2]['modules'][1]}
+        return (200, {}, r)
+
+    def post_modules(self, **kw):
+        r = {'module': self.get_modules()[2]['modules'][0]}
+        return (200, {}, r)
+
+    def put_modules_4321(self, **kw):
+        return (200, {}, {"module": {'name': 'mod3'}})
+
+    def delete_modules_4321(self, **kw):
+        return (200, {}, None)
+
+    def get_instances_1234_modules(self, **kw):
+        return (200, {}, {"modules": [{"module": {}}]})
+
+    def get_modules_4321_instances(self, **kw):
+        return self.get_instances()
+
+    def get_instances_modules(self, **kw):
+        return (200, {}, None)
+
+    def get_instances_member_1_modules(self, **kw):
+        return self.get_modules()
+
+    def get_instances_member_2_modules(self, **kw):
+        return self.get_modules()
+
+    def post_instances_1234_modules(self, **kw):
+        r = {'modules': [self.get_modules()[2]['modules'][0]]}
+        return (200, {}, r)
+
+    def delete_instances_1234_modules_4321(self, **kw):
+        return (200, {}, None)
+
     def get_limits(self, **kw):
         return (200, {}, {"limits": [
             {
@@ -507,6 +602,9 @@ class FakeHTTPClient(base_client.HTTPClient):
 
     def post_clusters_cls_1234_root(self, **kw):
         return (202, {}, {"user": {"password": "password", "name": "root"}})
+
+    def delete_instances_1234_root(self, **kw):
+        return (202, {}, None)
 
     def get_instances_1234_root(self, **kw):
         return (200, {}, {"rootEnabled": 'True'})

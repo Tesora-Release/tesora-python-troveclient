@@ -57,16 +57,14 @@ class Root(base.ManagerWithFind):
 
     def delete(self, instance):
         """Implements root-disable API.
-
         Disables access to the root user for the specified db instance.
-
-        :param instance: The instance on which the root user is disabled
+        :param instance: The instance on which the root user is enabled
         """
-        return self.disable_instance_root(instance)
+        self.disable_instance_root(instance)
 
     def disable_instance_root(self, instance):
         """Implements root-disable for instances."""
-        return self._disable_root(self.instances_url % base.getid(instance))
+        self._disable_root(self.instances_url % base.getid(instance))
 
     def _disable_root(self, url):
         resp, body = self.api.client.delete(url)

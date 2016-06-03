@@ -1,0 +1,5 @@
+---
+features:
+    - Support was added for modules in cluster-grow.
+      Bug 15778917
+
