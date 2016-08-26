@@ -88,7 +88,8 @@ class InstancesTest(testtools.TestCase):
         super(InstancesTest, self).tearDown()
         instances.Instances.__init__ = self.orig__init
 
-    def test_create(self):
+    @mock.patch('warnings.warn')
+    def test_create(self, mock_warn):
         def side_effect_func(path, body, inst):
             return path, body, inst
 
@@ -98,8 +99,9 @@ class InstancesTest(testtools.TestCase):
                                         ['db1', 'db2'], ['u1', 'u2'],
                                         datastore="datastore",
                                         datastore_version="datastore-version",
-                                        nics=nics,
+                                        nics=nics, slave_of='test',
                                         replica_count=4,
+                                        modules=['mod_id'],
                                         locality='affinity')
         self.assertEqual("/instances", p)
         self.assertEqual("instance", i)
@@ -114,6 +116,12 @@ class InstancesTest(testtools.TestCase):
         self.assertEqual(103, b["instance"]["flavorRef"])
         self.assertEqual(4, b["instance"]["replica_count"])
         self.assertEqual('affinity', b["instance"]["locality"])
+        # Assert that slave_of is not used and if specified, there is a warning
+        # and it's value is used for replica_of.
+        self.assertEqual('test', b['instance']['replica_of'])
+        self.assertNotIn('slave_of', b['instance'])
+        self.assertTrue(mock_warn.called)
+        self.assertEqual([{'id': 'mod_id'}], b["instance"]["modules"])
 
     def test_list(self):
         page_mock = mock.Mock()
@@ -215,8 +223,14 @@ class InstancesTest(testtools.TestCase):
     def test_edit(self):
         resp = mock.Mock()
         resp.status_code = 204
-        body = None
-        self.instances.api.client.patch = mock.Mock(return_value=(resp, body))
+
+        def fake_patch(url, body):
+            # Make sure we never pass slave_of to the API.
+            self.assertIn('instance', body)
+            self.assertNotIn('slave_of', body['instance'])
+            return resp, None
+
+        self.instances.api.client.patch = mock.Mock(side_effect=fake_patch)
         self.instances.edit(123)
         self.instances.edit(123, 321)
         self.instances.edit(123, 321, 'name-1234')

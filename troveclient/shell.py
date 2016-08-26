@@ -102,7 +102,8 @@ class OpenStackTroveShell(object):
 
         parser.add_argument('--version',
                             action='version',
-                            version=troveclient.__version__)
+                            version=troveclient.__version__,
+                            help="Show program's version number and exit.")
 
         parser.add_argument('--debug',
                             action='store_true',
@@ -147,12 +148,16 @@ class OpenStackTroveShell(object):
         parser.add_argument('--database_service_name',
                             help=argparse.SUPPRESS)
 
+        default_trove_endpoint_type = utils.env(
+            'OS_ENDPOINT_TYPE',
+            default=DEFAULT_TROVE_ENDPOINT_TYPE)
         parser.add_argument('--endpoint-type',
                             metavar='<endpoint-type>',
                             default=utils.env(
                                 'TROVE_ENDPOINT_TYPE',
-                                default=DEFAULT_TROVE_ENDPOINT_TYPE),
+                                default=default_trove_endpoint_type),
                             help='Defaults to env[TROVE_ENDPOINT_TYPE] or '
+                            + 'env[OS_ENDPOINT_TYPE] or '
                             + DEFAULT_TROVE_ENDPOINT_TYPE + '.')
         parser.add_argument('--endpoint_type',
                             help=argparse.SUPPRESS)
