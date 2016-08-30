@@ -17,6 +17,7 @@
 from __future__ import print_function
 
 import argparse
+import re
 import sys
 import time
 
@@ -223,7 +224,8 @@ def do_flavor_list(cs, args):
                      labels={'ram': 'RAM'})
 
 
-@utils.arg('flavor', metavar='<flavor>', help='ID or name of the flavor.')
+@utils.arg('flavor', metavar='<flavor>', type=str,
+           help='ID or name of the flavor.')
 @utils.service_type('database')
 def do_flavor_show(cs, args):
     """Shows details of a flavor."""
@@ -392,12 +394,51 @@ def do_delete(cs, args):
     cs.instances.delete(instance)
 
 
+@utils.arg('instance', metavar='<instance>',
+           help='ID or name of the instance.')
+@utils.service_type('database')
+def do_force_delete(cs, args):
+    """Force delete an instance."""
+    instance = _find_instance(cs, args.instance)
+    cs.instances.reset_status(instance)
+    cs.instances.delete(instance)
+
+
+@utils.arg('instance', metavar='<instance>',
+           help='ID or name of the instance.')
+@utils.service_type('database')
+def do_reset_status(cs, args):
+    """Set the task status of an instance to NONE if the instance is in BUILD
+    or ERROR state. Resetting task status of an instance in BUILD state will
+    allow the instance to be deleted.
+    """
+    instance = _find_instance(cs, args.instance)
+    cs.instances.reset_status(instance=instance)
+
+
 @utils.arg('cluster', metavar='<cluster>', help='ID or name of the cluster.')
 @utils.service_type('database')
 def do_cluster_delete(cs, args):
     """Deletes a cluster."""
     cluster = _find_cluster(cs, args.cluster)
     cs.clusters.delete(cluster)
+
+
+@utils.arg('cluster', metavar='<cluster>', help='ID or name of the cluster.')
+@utils.service_type('database')
+def do_cluster_force_delete(cs, args):
+    """Force delete a cluster"""
+    cluster = _find_cluster(cs, args.cluster)
+    cs.clusters.reset_status(cluster)
+    cs.clusters.delete(cluster)
+
+
+@utils.arg('cluster', metavar='<cluster>', help='ID or name of the cluster.')
+@utils.service_type('database')
+def do_cluster_reset_status(cs, args):
+    """Set the cluster task to NONE."""
+    cluster = _find_cluster(cs, args.cluster)
+    cs.clusters.reset_status(cluster)
 
 
 @utils.arg('instance',
@@ -451,7 +492,8 @@ def do_update(cs, args):
            help="Volume type. Optional when volume support is enabled.")
 @utils.arg('flavor',
            metavar='<flavor>',
-           help='Flavor ID or name of the instance.')
+           type=str,
+           help='A flavor name or ID.')
 @utils.arg('--databases', metavar='<database>',
            help='Optional list of databases.',
            nargs="+", default=[])
@@ -620,11 +662,14 @@ def _unquote(value):
 
 
 def _get_volume(opts_str):
-    volume_size, opts_str = _strip_option(opts_str, 'volume', is_required=True)
+    volume_size, opts_str = _strip_option(opts_str, 'volume',
+                                          is_required=False)
     volume_type, opts_str = _strip_option(opts_str, 'volume_type',
                                           is_required=False)
 
-    volume_info = {"size": volume_size}
+    volume_info = dict()
+    if volume_size:
+        volume_info.update({"size": volume_size})
     if volume_type:
         volume_info.update({"type": volume_type})
 
@@ -653,7 +698,7 @@ def _strip_option(opts_str, opt_name, is_required=True,
                   quotes_required=False, allow_multiple=False):
     opt_value = [] if allow_multiple else None
     opts_str = opts_str.strip().strip(",")
-    if opt_name in opts_str:
+    if re.search(r'(^|,[ ]*){}='.format(opt_name), opts_str):
         try:
             split_str = '%s=' % opt_name
             parts = opts_str.split(split_str)
@@ -713,7 +758,8 @@ def _parse_instance_options(cs, instance_options, for_grow=False):
         flavor, instance_opts = _get_flavor(cs, instance_opts)
         instance_info["flavorRef"] = flavor
         volume, instance_opts = _get_volume(instance_opts)
-        instance_info["volume"] = volume
+        if volume:
+            instance_info["volume"] = volume
 
         nics, instance_opts = _get_networks(instance_opts)
         if nics:
@@ -757,6 +803,33 @@ def _parse_instance_options(cs, instance_options, for_grow=False):
     return instances
 
 
+def _parse_properties(extended_properties):
+    properties = {}
+    if extended_properties:
+        remaining_props = extended_properties
+        supported_properties = [
+            # Oracle RAC
+            'storage_type', 'database',
+            'votedisk_mount', 'registry_mount', 'database_mount',
+            'subnet', 'subnetpool', 'network', 'router', 'prefixlen',
+        ]
+
+        for supported_property in supported_properties:
+            try:
+                value, remaining_props = _strip_option(
+                    remaining_props, supported_property, is_required=False)
+            except exceptions.ValidationError:
+                raise exceptions.ValidationError(
+                    "Invalid value for property " + supported_property)
+            if value:
+                properties[supported_property] = value
+
+        if remaining_props:
+            raise exceptions.ValidationError(
+                "Unknown properties(s) '%s'" % remaining_props)
+    return properties
+
+
 @utils.arg('name',
            metavar='<name>',
            type=str,
@@ -776,6 +849,11 @@ def _parse_instance_options(cs, instance_options, for_grow=False):
            choices=LOCALITY_DOMAIN,
            help='Locality policy to use when creating cluster. Choose '
                 'one of %(choices)s.')
+@utils.arg('--property',
+           dest='extended_properties',
+           default=None,
+           metavar='<key=value>',
+           help="Arbitrary key/value properties for the datastore.")
 @utils.service_type('database')
 def do_cluster_create(cs, args):
     """Creates a new cluster."""
@@ -783,11 +861,14 @@ def do_cluster_create(cs, args):
     if len(instances) == 0:
         raise exceptions.MissingArgs(['instance'])
 
+    properties = _parse_properties(args.extended_properties)
+
     cluster = cs.clusters.create(args.name,
                                  args.datastore,
                                  args.datastore_version,
                                  instances=instances,
-                                 locality=args.locality)
+                                 locality=args.locality,
+                                 extended_properties=properties)
     _print_cluster(cluster)
 
 
@@ -797,6 +878,7 @@ def do_cluster_create(cs, args):
            help='ID or name of the instance.')
 @utils.arg('flavor',
            metavar='<flavor>',
+           type=str,
            help='New flavor of the instance.')
 @utils.service_type('database')
 def do_resize_instance(cs, args):
@@ -954,13 +1036,18 @@ def do_backup_delete(cs, args):
 @utils.arg('--parent', metavar='<parent>', default=None,
            help='Optional ID of the parent backup to perform an'
            ' incremental backup from.')
+@utils.arg('--incremental', action='store_true', default=False,
+           help='Create an incremental backup based on the last'
+                ' full or incremental backup. It will create a'
+                ' full backup if no existing backup found.')
 @utils.service_type('database')
 def do_backup_create(cs, args):
     """Creates a backup of an instance."""
     instance = _find_instance(cs, args.instance)
     backup = cs.backups.create(args.name, instance,
                                description=args.description,
-                               parent_id=args.parent)
+                               parent_id=args.parent,
+                               incremental=args.incremental)
     _print_object(backup)
 
 
@@ -986,6 +1073,80 @@ def do_backup_copy(cs, args):
                                description=args.description,
                                parent_id=None, backup=backup_ref,)
     _print_object(backup)
+
+
+@utils.arg('instance', metavar='<instance>',
+           help='ID or name of the instance.')
+@utils.arg('pattern', metavar='<pattern>',
+           help='Cron style pattern describing schedule occurrence.')
+@utils.arg('name', metavar='<name>', help='Name of the backup.')
+@utils.arg('--description', metavar='<description>',
+           default=None,
+           help='An optional description for the backup.')
+@utils.arg('--incremental', action="store_true", default=False,
+           help='Flag to select incremental backup based on most recent'
+           ' backup.')
+@utils.service_type('database')
+def do_schedule_create(cs, args):
+    """Schedules backups for an instance."""
+    instance = _find_instance(cs, args.instance)
+    backup = cs.backups.schedule_create(instance, args.pattern, args.name,
+                                        description=args.description,
+                                        incremental=args.incremental)
+    _print_object(backup)
+
+
+@utils.arg('instance', metavar='<instance>',
+           help='ID or name of the instance.')
+@utils.service_type('database')
+def do_schedule_list(cs, args):
+    """Lists scheduled backups for an instance."""
+    instance = _find_instance(cs, args.instance)
+    schedules = cs.backups.schedule_list(instance)
+    utils.print_list(schedules, ['id', 'name', 'pattern',
+                                 'next_execution_time'],
+                     order_by='next_execution_time')
+
+
+@utils.arg('id', metavar='<schedule id>', help='Id of the schedule.')
+@utils.service_type('database')
+def do_schedule_show(cs, args):
+    """Shows details of a schedule."""
+    _print_object(cs.backups.schedule_show(args.id))
+
+
+@utils.arg('id', metavar='<schedule id>', help='Id of the schedule.')
+@utils.service_type('database')
+def do_schedule_delete(cs, args):
+    """Deletes a schedule."""
+    cs.backups.schedule_delete(args.id)
+
+
+@utils.arg('id', metavar='<schedule id>', help='Id of the schedule.')
+@utils.arg('--limit', metavar='<limit>',
+           default=None, type=int,
+           help='Return up to N number of the most recent executions.')
+@utils.arg('--marker', metavar='<ID>', type=str, default=None,
+           help='Begin displaying the results for IDs greater than the '
+                'specified marker. When used with --limit, set this to '
+                'the last ID displayed in the previous run.')
+@utils.service_type('database')
+def do_execution_list(cs, args):
+    """Lists executions of a scheduled backup of an instance."""
+    executions = cs.backups.execution_list(args.id, marker=args.marker,
+                                           limit=args.limit)
+
+    utils.print_list(executions, ['id', 'created_at', 'state', 'output'],
+                     labels={'created_at': 'Execution Time'},
+                     order_by='created_at')
+
+
+@utils.arg('execution', metavar='<execution>',
+           help='Id of the execution to delete.')
+@utils.service_type('database')
+def do_execution_delete(cs, args):
+    """Deletes an execution."""
+    cs.backups.execution_delete(args.execution)
 
 
 # Database related actions
@@ -2101,3 +2262,24 @@ def do_log_save(cs, args):
 #         args.datastore_version,
 #         args.name,
 #     )
+
+@utils.arg('tenant_id', metavar='<tenant_id>',
+           help='Id of tenant for which to show quotas.')
+@utils.service_type('database')
+def do_quota_show(cs, args):
+    """Show quotas for a tenant."""
+    utils.print_list(cs.quota.show(args.tenant_id),
+                     ['resource', 'in_use', 'reserved', 'limit'])
+
+
+@utils.arg('tenant_id', metavar='<tenant_id>',
+           help='Id of tenant for which to show quotas.')
+@utils.arg('resource', metavar='<resource>',
+           help='Id of resource to change.')
+@utils.arg('limit', metavar='<limit>', type=int,
+           help='New limit to set for the named resource.')
+@utils.service_type('database')
+def do_quota_update(cs, args):
+    """Update quotas for a tenant."""
+    utils.print_dict(cs.quota.update(args.tenant_id,
+                                     {args.resource: args.limit}))
