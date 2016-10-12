@@ -32,7 +32,7 @@ INSTANCE_HELP = ("Add an instance to the cluster.  Specify multiple "
                  "port-id=<port-uuid>>' "
                  "(where net-id=network_id, v4-fixed-ip=IPv4r_fixed_address, "
                  "port-id=port_id), availability_zone=<AZ_hint_for_Nova>, "
-                 "module=<module_name_or_id>.")
+                 "module=<module_name_or_id>, type=<type_of_cluster_node>.")
 NIC_ERROR = ("Invalid NIC argument: %s. Must specify either net-id or port-id "
              "but not both. Please refer to help.")
 NO_LOG_FOUND_ERROR = "ERROR: No published '%s' log was found for %s."
@@ -137,6 +137,24 @@ def _print_object(obj):
         del(obj._info['str_id'])
 
     utils.print_dict(obj._info)
+
+
+def _format_database_list(databases):
+    return ', '.join([db['name'] for db in databases])
+
+
+def _format_role_list(user_roles):
+    roles = []
+    for role in user_roles:
+        name = role.get('name')
+        if name:
+            db = role.get('database')
+            if db:
+                roles.append(':'.join([db, name]))
+            else:
+                roles.append(name)
+
+    return ', '.join(roles)
 
 
 def _find_instance_or_cluster(cs, instance_or_cluster):
@@ -439,6 +457,17 @@ def do_cluster_reset_status(cs, args):
     """Set the cluster task to NONE."""
     cluster = _find_cluster(cs, args.cluster)
     cs.clusters.reset_status(cluster)
+
+
+@utils.arg('cluster', metavar='<cluster>', help='ID or name of the cluster.')
+@utils.arg('datastore_version',
+           metavar='<datastore_version>',
+           help='A datastore version name or ID.')
+@utils.service_type('database')
+def do_cluster_upgrade(cs, args):
+    """Upgrades a cluster to a new datastore version."""
+    cluster = _find_cluster(cs, args.cluster)
+    cs.clusters.upgrade(cluster, args.datastore_version)
 
 
 @utils.arg('instance',
@@ -774,12 +803,12 @@ def _parse_instance_options(cs, instance_options, for_grow=False):
         if modules:
             instance_info["modules"] = modules
 
-        if for_grow:
-            instance_type, instance_opts = _strip_option(
-                instance_opts, 'type', is_required=False)
-            if instance_type:
-                instance_info["type"] = instance_type
+        instance_type, instance_opts = _strip_option(
+            instance_opts, 'type', is_required=False, allow_multiple=True)
+        if instance_type:
+            instance_info["type"] = instance_type
 
+        if for_grow:
             related_to, instance_opts = _strip_option(
                 instance_opts, 'related_to', is_required=False)
             if instance_type:
@@ -803,26 +832,19 @@ def _parse_instance_options(cs, instance_options, for_grow=False):
     return instances
 
 
-def _parse_properties(extended_properties):
+def _parse_properties(extended_properties, valid_property_names):
     properties = {}
     if extended_properties:
         remaining_props = extended_properties
-        supported_properties = [
-            # Oracle RAC
-            'storage_type', 'database',
-            'votedisk_mount', 'registry_mount', 'database_mount',
-            'subnet', 'subnetpool', 'network', 'router', 'prefixlen',
-        ]
-
-        for supported_property in supported_properties:
+        for name in valid_property_names:
             try:
                 value, remaining_props = _strip_option(
-                    remaining_props, supported_property, is_required=False)
+                    remaining_props, name, is_required=False)
             except exceptions.ValidationError:
                 raise exceptions.ValidationError(
-                    "Invalid value for property " + supported_property)
+                    "Invalid value for property " + name)
             if value:
-                properties[supported_property] = value
+                properties[name] = value
 
         if remaining_props:
             raise exceptions.ValidationError(
@@ -861,7 +883,14 @@ def do_cluster_create(cs, args):
     if len(instances) == 0:
         raise exceptions.MissingArgs(['instance'])
 
-    properties = _parse_properties(args.extended_properties)
+    valid_properties = [
+        # Oracle RAC
+        'storage_type', 'database',
+        'votedisk_mount', 'registry_mount', 'database_mount',
+        'subnet', 'subnetpool', 'network', 'router', 'prefixlen'
+    ]
+
+    properties = _parse_properties(args.extended_properties, valid_properties)
 
     cluster = cs.clusters.create(args.name,
                                  args.datastore,
@@ -1208,6 +1237,14 @@ def do_database_delete(cs, args):
 @utils.arg('--databases', metavar='<databases>',
            help='Optional list of databases.',
            nargs="+", default=[])
+@utils.arg('--roles', metavar='<roles>',
+           help='Optional list of roles.',
+           nargs="+", default=[])
+@utils.arg('--property',
+           dest='extended_properties',
+           default=None,
+           metavar='<key=value>',
+           help="Any additional key/value properties as define by datastore.")
 @utils.service_type('database')
 def do_user_create(cs, args):
     """Creates a user on an instance."""
@@ -1215,8 +1252,29 @@ def do_user_create(cs, args):
     databases = [{'name': value} for value in args.databases]
     user = {'name': args.name, 'password': args.password,
             'databases': databases}
+    if args.roles:
+        user['roles'] = [{'name': value} for value in args.roles]
     if args.host:
         user['host'] = args.host
+
+    valid_properties = [
+        # Couchbase
+        'bucket_ramsize', 'bucket_replica', 'enable_index_replica',
+        'bucket_eviction_policy', 'bucket_priority'
+    ]
+
+    props = _parse_properties(args.extended_properties, valid_properties)
+    if 'bucket_ramsize' in props:
+        user['bucket_ramsize'] = int(props.get('bucket_ramsize'))
+    if 'bucket_replica' in props:
+        user['bucket_replica'] = int(props.get('bucket_replica'))
+    if 'enable_index_replica' in props:
+        user['enable_index_replica'] = int(props.get('enable_index_replica'))
+    if 'bucket_eviction_policy' in props:
+        user['bucket_eviction_policy'] = props.get('bucket_eviction_policy')
+    if 'bucket_priority' in props:
+        user['bucket_priority'] = props.get('bucket_priority')
+
     cs.users.create(instance, [user])
 
 
@@ -1231,10 +1289,23 @@ def do_user_list(cs, args):
     while (wrapper.next):
         wrapper = cs.users.list(instance, marker=wrapper.next)
         users += wrapper.items
+
+    fields = ['name']
+    if users:
+        user_fields = users[0].to_dict().keys()
+        fields.extend(sorted(set(user_fields) - set(fields)))
+
+    if 'databases' in fields:
+        for user in users:
+            user.databases = _format_database_list(user.databases)
+
     for user in users:
-        db_names = [db['name'] for db in user.databases]
-        user.databases = ', '.join(db_names)
-    utils.print_list(users, ['name', 'host', 'databases'])
+        if hasattr(user, 'roles'):
+            user.roles = _format_role_list(user.roles)
+        else:
+            user.roles = ''
+
+    utils.print_list(users, fields)
 
 
 @utils.arg('instance', metavar='<instance>',
@@ -1259,6 +1330,8 @@ def do_user_show(cs, args):
     """Shows details of a user of an instance."""
     instance = _find_instance(cs, args.instance)
     user = cs.users.get(instance, args.name, hostname=args.host)
+    if 'databases' in user.to_dict():
+        user._info['databases'] = _format_database_list(user.databases)
     _print_object(user)
 
 
@@ -1286,6 +1359,11 @@ def do_user_show_access(cs, args):
            help='Optional new password of user.')
 @utils.arg('--new_host', metavar='<new_host>', default=None,
            help='Optional new host of user.')
+@utils.arg('--property',
+           dest='extended_properties',
+           default=None,
+           metavar='<key=value>',
+           help="Any additional key/value properties as define by datastore.")
 @utils.service_type('database')
 def do_user_update_attributes(cs, args):
     """Updates a user's attributes on an instance.
@@ -1299,6 +1377,28 @@ def do_user_update_attributes(cs, args):
         new_attrs['password'] = args.new_password
     if args.new_host:
         new_attrs['host'] = args.new_host
+
+    valid_properties = [
+        # Couchbase
+        'new_bucket_ramsize', 'new_bucket_replica',
+        'new_enable_index_replica', 'new_bucket_eviction_policy',
+        'new_bucket_priority',
+    ]
+
+    props = _parse_properties(args.extended_properties, valid_properties)
+    if 'new_bucket_ramsize' in props:
+        new_attrs['bucket_ramsize'] = int(props.get('new_bucket_ramsize'))
+    if 'new_bucket_replica' in props:
+        new_attrs['bucket_replica'] = int(props.get('new_bucket_replica'))
+    if 'new_enable_index_replica' in props:
+        new_attrs['enable_index_replica'] = int(props.get(
+            'new_enable_index_replica'))
+    if 'new_bucket_eviction_policy' in props:
+        new_attrs['bucket_eviction_policy'] = props.get(
+            'new_bucket_eviction_policy')
+    if 'new_bucket_priority' in props:
+        new_attrs['bucket_priority'] = props.get('new_bucket_priority')
+
     cs.users.update_attributes(instance, args.name,
                                newuserattr=new_attrs, hostname=args.host)
 
@@ -1781,20 +1881,35 @@ def do_module_list(cs, args):
             datastore = _find_datastore(cs, args.datastore)
     module_list = cs.modules.list(datastore=datastore)
     field_list = ['id', 'name', 'type', 'datastore',
-                  'datastore_version', 'auto_apply', 'tenant', 'visible']
+                  'datastore_version', 'auto_apply',
+                  'priority_apply', 'apply_order', 'is_admin',
+                  'tenant', 'visible']
     is_admin = False
-    if hasattr(cs.client, 'auth'):
-        if 'roles' in cs.client.auth.auth_ref['user']:
-            roles = cs.client.auth.auth_ref['user']['roles']
-        else:
-            roles = cs.client.auth.auth_ref['roles']
+    try:
+        try:
+            if 'roles' in cs.client.auth.auth_ref['user']:
+                # Keystone V2
+                roles = cs.client.auth.auth_ref['user']['roles']
+            else:
+                # Keystone V3
+                roles = cs.client.auth.auth_ref['roles']
+        except TypeError:
+            # Try one more place
+            roles = cs.client.auth.auth_ref._data['access']['user']['roles']
         role_names = [role['name'] for role in roles]
         is_admin = 'admin' in role_names
+    except TypeError:
+        pass
+    except AttributeError:
+        pass
     if not is_admin:
         field_list = field_list[:-2]
     utils.print_list(
         module_list, field_list,
-        labels={'datastore_version': 'Version'})
+        labels={'datastore_version': 'Version',
+                'priority_apply': 'Priority',
+                'apply_order': 'Order',
+                'is_admin': 'Admin'})
 
 
 @utils.arg('module', metavar='<module>',
@@ -1824,16 +1939,29 @@ def do_module_show(cs, args):
                 'to. If not specified, module can be applied to all versions.')
 @utils.arg('--auto_apply', action='store_true', default=False,
            help='Automatically apply this module when creating an instance '
-                'or cluster.')
+                'or cluster. Admin only.')
 @utils.arg('--all_tenants', action='store_true', default=False,
-           help='Module is valid for all tenants (Admin only).')
-# This option is to suppress the module from module-list for non-admin
+           help='Module is valid for all tenants. Admin only.')
 @utils.arg('--hidden', action='store_true', default=False,
-           help=argparse.SUPPRESS)
+           help='Hide this module from non-Admin. Useful in creating '
+                'auto-apply modules without cluttering up module lists. '
+                'Admin only.')
 @utils.arg('--live_update', action='store_true', default=False,
            help='Allow module to be updated even if it is already applied '
                 'to a current instance or cluster. Automatically attempt to '
                 'reapply this module if the contents change.')
+@utils.arg('--priority_apply', action='store_true', default=False,
+           help='Sets a priority for applying the module. All priority '
+                'modules will be applied before non-priority ones. '
+                'Admin only.')
+@utils.arg('--apply_order', type=int, default=5, choices=range(0, 10),
+           help='Sets an order for applying the module. Modules with a lower '
+                'value will be applied before modules with a higher '
+                'value. Modules having the same value may be '
+                'applied in any order (default %(default)s).')
+@utils.arg('--full_access', action='store_true', default=None,
+           help="Marks a module as 'non-admin', unless an admin-only "
+                "option was specified. Admin only.")
 @utils.service_type('database')
 def do_module_create(cs, args):
     """Create a module."""
@@ -1848,7 +1976,8 @@ def do_module_create(cs, args):
         all_tenants=args.all_tenants, datastore=args.datastore,
         datastore_version=args.datastore_version,
         auto_apply=args.auto_apply, visible=not args.hidden,
-        live_update=args.live_update)
+        live_update=args.live_update, priority_apply=args.priority_apply,
+        apply_order=args.apply_order, full_access=args.full_access)
     _print_object(module)
 
 
@@ -1858,7 +1987,7 @@ def do_module_create(cs, args):
            help='Name of the module.')
 @utils.arg('--type', metavar='<type>', type=str, default=None,
            help='Type of the module. The type must be supported by a '
-                'corresponding module plugin on the datastore it is '
+                'corresponding module driver plugin on the datastore it is '
                 'applied to.')
 @utils.arg('--file', metavar='<filename>', type=argparse.FileType('rb', 0),
            default=None,
@@ -1866,35 +1995,36 @@ def do_module_create(cs, args):
 @utils.arg('--description', metavar='<description>', type=str, default=None,
            help='Description of the module.')
 @utils.arg('--datastore', metavar='<datastore>',
+           default=None,
            help='Name or ID of datastore this module can be applied to. '
                 'If not specified, module can be applied to all datastores.')
-@utils.arg('--all_datastores', dest='datastore', action='store_const',
-           const=None,
+@utils.arg('--all_datastores', default=None, action='store_const', const=True,
            help='Module is valid for all datastores.')
 @utils.arg('--datastore_version', metavar='<version>',
+           default=None,
            help='Name or ID of datastore version this module can be applied '
                 'to. If not specified, module can be applied to all versions.')
-@utils.arg('--all_datastore_versions', dest='datastore_version',
-           action='store_const', const=None,
-           help='Module is valid for all datastore version.')
+@utils.arg('--all_datastore_versions', default=None,
+           action='store_const', const=True,
+           help='Module is valid for all datastore versions.')
 @utils.arg('--auto_apply', action='store_true', default=None,
            help='Automatically apply this module when creating an instance '
-                'or cluster.')
+                'or cluster. Admin only.')
 @utils.arg('--no_auto_apply', dest='auto_apply', action='store_false',
            default=None,
            help='Do not automatically apply this module when creating an '
-                'instance or cluster.')
+                'instance or cluster. Admin only.')
 @utils.arg('--all_tenants', action='store_true', default=None,
-           help='Module is valid for all tenants (Admin only).')
+           help='Module is valid for all tenants. Admin only.')
 @utils.arg('--no_all_tenants', dest='all_tenants', action='store_false',
            default=None,
-           help='Module is valid for current tenant only (Admin only).')
-# This option is to suppress the module from module-list for non-admin
+           help='Module is valid for current tenant only. Admin only.')
 @utils.arg('--hidden', action='store_true', default=None,
-           help=argparse.SUPPRESS)
-# This option is to allow the module to be seen from module-list for non-admin
+           help='Hide this module from non-admin users. Useful in creating '
+                'auto-apply modules without cluttering up module lists. '
+                'Admin only.')
 @utils.arg('--no_hidden', dest='hidden', action='store_false', default=None,
-           help=argparse.SUPPRESS)
+           help='Allow all users to see this module. Admin only.')
 @utils.arg('--live_update', action='store_true', default=None,
            help='Allow module to be updated or deleted even if it is already '
                 'applied to a current instance or cluster. Automatically '
@@ -1903,22 +2033,41 @@ def do_module_create(cs, args):
            default=None,
            help='Restricts a module from being updated or deleted if it is '
                 'already applied to a current instance or cluster.')
+@utils.arg('--priority_apply', action='store_true', default=None,
+           help='Sets a priority for applying the module. All priority '
+                'modules will be applied before non-priority ones. '
+                'Admin only.')
+@utils.arg('--no_priority_apply', dest='priority_apply', action='store_false',
+           default=None,
+           help='Removes apply priority from the module. Admin only.')
+@utils.arg('--apply_order', type=int, default=None, choices=range(0, 10),
+           help='Sets an order for applying the module. Modules with a lower '
+                'value will be applied before modules with a higher '
+                'value. Modules having the same value may be '
+                'applied in any order (default %(default)s).')
+@utils.arg('--full_access', action='store_true', default=None,
+           help="Marks a module as 'non-admin', unless an admin-only "
+                "option was specified. Admin only.")
+@utils.arg('--no_full_access', dest='full_access', action='store_false',
+           default=None,
+           help='Restricts modification access for non-admin. Admin only.')
 @utils.service_type('database')
 def do_module_update(cs, args):
     """Update a module."""
     module = _find_module(cs, args.module)
     contents = args.file.read() if args.file else None
     visible = not args.hidden if args.hidden is not None else None
-    datastore_args = {}
-    if args.datastore:
-        datastore_args['datastore'] = args.datastore
-    if args.datastore_version:
-        datastore_args['datastore_version'] = args.datastore_version
+    datastore_args = {'datastore': args.datastore,
+                      'datastore_version': args.datastore_version}
     updated_module = cs.modules.update(
         module, name=args.name, module_type=args.type, contents=contents,
         description=args.description, all_tenants=args.all_tenants,
         auto_apply=args.auto_apply, visible=visible,
-        live_update=args.live_update, **datastore_args)
+        live_update=args.live_update, all_datastores=args.all_datastores,
+        all_datastore_versions=args.all_datastore_versions,
+        priority_apply=args.priority_apply,
+        apply_order=args.apply_order, full_access=args.full_access,
+        **datastore_args)
     _print_object(updated_module)
 
 

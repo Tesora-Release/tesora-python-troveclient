@@ -70,12 +70,13 @@ class UsersTest(testtools.TestCase):
         return mock.Mock(side_effect=side_effect_func)
 
     def _build_fake_user(self, name, hostname=None, password=None,
-                         databases=None):
+                         databases=None, roles=None):
         return {
             'name': name,
             'password': password if password else 'password',
             'host': hostname,
             'databases': databases if databases else [],
+            'roles': roles if roles else [],
         }
 
     def test_create(self):

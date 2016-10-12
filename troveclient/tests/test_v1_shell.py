@@ -177,6 +177,10 @@ class ShellTest(utils.TestCase):
         self.run_command('show 1234')
         self.assert_called('GET', '/instances/1234')
 
+    def test_reset_status(self):
+        self.run_command('reset-status 1234')
+        self.assert_called('POST', '/instances/1234/action')
+
     def test_instance_delete(self):
         self.run_command('delete 1234')
         self.assert_called('DELETE', '/instances/1234')
@@ -184,6 +188,10 @@ class ShellTest(utils.TestCase):
     def test_instance_force_delete(self):
         self.run_command('force-delete 1234')
         self.assert_called('DELETE', '/instances/1234')
+
+    def test_instance_update(self):
+        self.run_command('update 1234')
+        self.assert_called('PATCH', '/instances/1234')
 
     def test_resize_instance(self):
         self.run_command('resize-instance 1234 1')
@@ -278,6 +286,10 @@ class ShellTest(utils.TestCase):
     def test_cluster_instances(self):
         self.run_command('cluster-instances cls-1234')
         self.assert_called('GET', '/clusters/cls-1234')
+
+    def test_cluster_reset_status(self):
+        self.run_command('cluster-reset-status cls-1234')
+        self.assert_called('POST', '/clusters/cls-1234')
 
     def test_cluster_delete(self):
         self.run_command('cluster-delete cls-1234')
@@ -670,7 +682,8 @@ class ShellTest(utils.TestCase):
                                 'all_tenants': 0,
                                 'module_type': 'type', 'visible': 1,
                                 'auto_apply': 0, 'live_update': 0,
-                                'name': 'mod1'}})
+                                'name': 'mod1', 'priority_apply': 0,
+                                'apply_order': 5}})
 
     def test_module_update(self):
         with mock.patch.object(troveclient.v1.modules.Module, '__repr__',
@@ -801,13 +814,15 @@ class ShellTest(utils.TestCase):
         self.assert_called('DELETE', '/instances/1234/users/jacob')
 
     def test_user_create(self):
-        self.run_command('user-create 1234 jacob password')
+        self.run_command('user-create 1234 jacob password '
+                         '--roles monitor')
         self.assert_called_anytime(
             'POST', '/instances/1234/users',
             {'users': [{
                 'password': 'password',
                 'name': 'jacob',
-                'databases': []}]})
+                'databases': [],
+                'roles': [{'name': 'monitor'}]}]})
 
     def test_user_show_access(self):
         self.run_command('user-show-access 1234 jacob')

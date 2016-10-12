@@ -86,7 +86,7 @@ class Backups(base.ManagerWithFind):
         body = {
             "backup": {
                 "name": name,
-                "incremental": incremental
+                "incremental": int(incremental)
             }
         }
 
