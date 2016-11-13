@@ -248,6 +248,29 @@ def find_resource(manager, name_or_id):
         raise exceptions.CommandError(msg)
 
 
+def is_admin(cs):
+    is_admin = False
+    try:
+        try:
+            if 'roles' in cs.client.auth.auth_ref['user']:
+                # Keystone V2
+                roles = cs.client.auth.auth_ref['user']['roles']
+            else:
+                # Keystone V3
+                roles = cs.client.auth.auth_ref['roles']
+        except TypeError:
+            # Try one more place
+            roles = cs.client.auth.auth_ref._data['access']['user']['roles']
+        role_names = [role['name'] for role in roles]
+        is_admin = 'admin' in role_names
+    except TypeError:
+        pass
+    except AttributeError:
+        pass
+
+    return is_admin
+
+
 class HookableMixin(object):
     """Mixin so classes can register and run hooks."""
     _hooks_map = {}

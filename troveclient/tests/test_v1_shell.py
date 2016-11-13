@@ -461,6 +461,11 @@ class ShellTest(utils.TestCase):
             exceptions.MissingArgs, "Missing option 'flavor'",
             self.run_command, cmd)
 
+    def test_cluster_restart(self):
+        cmd = ('cluster-restart cls-1234')
+        self.run_command(cmd)
+        self.assert_called('POST', '/clusters/cls-1234')
+
     def test_cluster_grow(self):
         cmd = ('cluster-grow cls-1234 '
                '--instance flavor=2,volume=2 '
@@ -470,6 +475,16 @@ class ShellTest(utils.TestCase):
 
     def test_cluster_shrink(self):
         cmd = ('cluster-shrink cls-1234 1234')
+        self.run_command(cmd)
+        self.assert_called('POST', '/clusters/cls-1234')
+
+    def test_cluster_configuration_attach(self):
+        cmd = ('cluster-configuration-attach cls-1234 config-1234')
+        self.run_command(cmd)
+        self.assert_called('POST', '/clusters/cls-1234')
+
+    def test_cluster_configuration_detach(self):
+        cmd = ('cluster-configuration-detach cls-1234')
         self.run_command(cmd)
         self.assert_called('POST', '/clusters/cls-1234')
 
@@ -715,6 +730,27 @@ class ShellTest(utils.TestCase):
             self.run_command('module-instances 4321 --include_clustered')
             self.assert_called_anytime(
                 'GET', '/modules/4321/instances?include_clustered=True')
+
+    def test_module_instance_count(self):
+        with mock.patch.object(troveclient.v1.modules.Module, '__repr__',
+                               mock.Mock(return_value='4321')):
+            self.run_command('module-instance-count 4321')
+            self.assert_called(
+                'GET', '/modules/4321/instances?count_only=True')
+
+    def test_module_instance_count_clustered(self):
+        with mock.patch.object(troveclient.v1.modules.Module, '__repr__',
+                               mock.Mock(return_value='4321')):
+            self.run_command('module-instance-count 4321 --include_clustered')
+            self.assert_called(
+                'GET', '/modules/4321/instances?count_only=True&'
+                       'include_clustered=True')
+
+    def test_module_reapply(self):
+        with mock.patch.object(troveclient.v1.modules.Module, '__repr__',
+                               mock.Mock(return_value='4321')):
+            self.run_command('module-reapply 4321 --delay=5')
+            self.assert_called_anytime('PUT', '/modules/4321/instances')
 
     def test_cluster_modules(self):
         self.run_command('cluster-modules cls-1234')

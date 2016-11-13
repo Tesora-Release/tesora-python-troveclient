@@ -176,6 +176,17 @@ class FakeHTTPClient(base_client.HTTPClient):
                 "region": "regionOne",
                 "datastore": {"version": "5.6", "type": "mysql"}}]})
 
+    def get_instance_counts(self, **kw):
+        return (200, {}, {"instances": [
+            {
+                "module_id": "4321",
+                "module_name": "mod1",
+                "min_date": "2015-05-02T11:06:16",
+                "max_date": "2015-05-02T11:06:19",
+                "module_md5": "9db783b92a9355f70c41806659fcb77d",
+                "current": True,
+                "count": 1}]})
+
     def get_instances_1234(self, **kw):
         r = {'instance': self.get_instances()[2]['instances'][0]}
         return (200, {}, r)
@@ -485,7 +496,12 @@ class FakeHTTPClient(base_client.HTTPClient):
         return (200, {}, {"modules": [{"module": {}}]})
 
     def get_modules_4321_instances(self, **kw):
+        if kw.get('count_only', False):
+            return self.get_instance_counts()
         return self.get_instances()
+
+    def put_modules_4321_instances(self, **kw):
+        return (202, {}, None)
 
     def get_instances_modules(self, **kw):
         return (200, {}, None)

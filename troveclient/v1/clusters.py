@@ -19,6 +19,7 @@ from troveclient import common
 
 class Cluster(base.Resource):
     """A Cluster is an opaque cluster used to store Database clusters."""
+
     def __repr__(self):
         return "<Cluster: %s>" % self.name
 
@@ -28,7 +29,7 @@ class Cluster(base.Resource):
 
     def force_delete(self):
         """Force delete the cluster"""
-        self.manager.reset_status(self)
+        self.manager.reset_status(self, force_delete=True)
         self.manager.delete(self)
 
 
@@ -37,7 +38,7 @@ class Clusters(base.ManagerWithFind):
     resource_class = Cluster
 
     def create(self, name, datastore, datastore_version, instances=None,
-               locality=None, extended_properties=None):
+               locality=None, configuration=None, extended_properties=None):
         """Create (boot) a new cluster."""
         body = {"cluster": {
             "name": name
@@ -51,6 +52,8 @@ class Clusters(base.ManagerWithFind):
             body["cluster"]["instances"] = instances
         if locality:
             body["cluster"]["locality"] = locality
+        if configuration:
+            body["cluster"]["configuration"] = configuration
         if extended_properties:
             body["cluster"]["extended_properties"] = extended_properties
 
@@ -80,12 +83,16 @@ class Clusters(base.ManagerWithFind):
         resp, body = self.api.client.delete(url)
         common.check_for_exceptions(resp, body, url)
 
-    def reset_status(self, cluster):
+    def reset_status(self, cluster, force_delete=False):
         """Reset the status of a cluster
 
         :param cluster: The cluster to reset
+        :param force_delete: Flag to indicate force delete operation
         """
-        body = {'reset-status': {}}
+        if force_delete:
+            body = {'reset-status': 'force_delete'}
+        else:
+            body = {'reset-status': {}}
         self._action(cluster, body)
 
     def _action(self, cluster, body):
@@ -128,13 +135,38 @@ class Clusters(base.ManagerWithFind):
         body = {"shrink": instances}
         return self._action(cluster, body)
 
+    def restart(self, cluster):
+        """Restart cluster nodes.
+
+        :param cluster:     The cluster to restart
+        """
+        body = {"restart": {}}
+        return self._action(cluster, body)
+
     def upgrade(self, cluster, datastore_version):
         """Upgrades a cluster to a new datastore version.
 
-        :param cluster:     The cluster to shrink
+        :param cluster:     The cluster to upgrade
         :param datastore_version:   Datastore version to which to upgrade
         """
         body = {"upgrade": {'datastore_version': datastore_version}}
+        return self._action(cluster, body)
+
+    def configuration_attach(self, cluster, configuration_id):
+        """Attaches a given configuration group to the cluster.
+
+        :param cluster:     The target cluster
+        :param configuration_id:   Attached configuration group id
+        """
+        body = {"configuration_attach": {'configuration_id': configuration_id}}
+        return self._action(cluster, body)
+
+    def configuration_detach(self, cluster):
+        """Detaches configuration group from the cluster.
+
+        :param cluster:     The target cluster
+        """
+        body = {"configuration_detach": {}}
         return self._action(cluster, body)
 
 

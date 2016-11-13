@@ -45,7 +45,7 @@ class Instance(base.Resource):
 
     def force_delete(self):
         """Force delete the instance"""
-        self.manager.reset_status(self)
+        self.manager.reset_status(self, force_delete=True)
         self.manager.delete(self)
 
     def restart(self):
@@ -221,21 +221,17 @@ class Instances(base.ManagerWithFind):
         resp, body = self.api.client.delete(url)
         common.check_for_exceptions(resp, body, url)
 
-    def reset_status(self, instance):
+    def reset_status(self, instance, force_delete=False):
         """Reset the status of an instance.
 
         :param instance: A reference to the instance
+        :param force_delete: Flag to indicate force delete operation
         """
-        body = {'reset_status': {}}
+        if force_delete:
+            body = {'reset_status': 'force_delete'}
+        else:
+            body = {'reset_status': {}}
         self._action(instance, body)
-
-    def force_delete(self, instance):
-        """Force delete the specified instance.
-
-        :param instance: A reference to the instance to force delete
-        """
-        self.reset_status(instance)
-        self.delete(instance)
 
     def _action(self, instance, body):
         """Perform a server "action" -- reboot/rebuild/resize/etc."""
