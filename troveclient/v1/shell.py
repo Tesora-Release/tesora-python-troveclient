@@ -17,6 +17,7 @@
 from __future__ import print_function
 
 import argparse
+import os
 import re
 import sys
 import time
@@ -1028,12 +1029,20 @@ def do_eject_replica_source(cs, args):
 # Backup related commands
 
 
+def _print_backup(backup):
+    info = backup._info.copy()
+    info.pop('type', None)
+    info.pop('filename', None)
+    info.pop('container', None)
+    utils.print_dict(info)
+
+
 @utils.arg('backup', metavar='<backup>', help='ID of the backup.')
 @utils.service_type('database')
 def do_backup_show(cs, args):
     """Shows details of a backup."""
     backup = _find_backup(cs, args.backup)
-    _print_object(backup)
+    _print_backup(backup)
 
 
 @utils.arg('instance', metavar='<instance>',
@@ -1113,6 +1122,46 @@ def do_backup_create(cs, args):
                                description=args.description,
                                parent_id=args.parent,
                                incremental=args.incremental)
+    _print_backup(backup)
+
+
+@utils.arg('backup', metavar='<backup>', help='ID or name of the backup.')
+@utils.arg('dest', metavar='<destination>',
+           help='Directory for the downloaded files.')
+@utils.service_type('database')
+def do_backup_export(cs, args):
+    """Exports backup data to local storage."""
+    backup = _find_backup(cs, args.backup)
+
+    data_file = cs.backups.download_data(backup, args.dest)
+    meta_file = cs.backups.download_metadata(backup, args.dest)
+
+    utils.print_dict({'metadata': meta_file,
+                      'data': data_file})
+
+
+@utils.arg('metadata_file', metavar='<metadata_file>',
+           help='Location of the source metadata. '
+           'The data if any will be loaded from the same directory.')
+@utils.service_type('database')
+def do_backup_import(cs, args):
+    """Imports a backup from local storage."""
+    # Get metadata path and file extension.
+    metadata_file = args.metadata_file
+    base_name, meta_ext = os.path.splitext(metadata_file)
+
+    # Find the first file other than the metadata with matching base name.
+    data_file = None
+    if os.path.exists(base_name):
+        data_file = base_name
+
+    # Import the trove record.
+    backup = cs.backups.upload_metadata(metadata_file)
+
+    # Upload the data if any.
+    if data_file:
+        cs.backups.upload_data(data_file, backup.container)
+
     _print_object(backup)
 
 

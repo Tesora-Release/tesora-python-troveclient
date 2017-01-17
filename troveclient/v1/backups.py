@@ -16,10 +16,12 @@
 #    under the License.
 
 import json
+import os
 import six
 import uuid
 
 from mistralclient.api.client import client as mistral_client
+from swiftclient import service as swift_service
 
 from troveclient import base
 from troveclient import common
@@ -108,6 +110,67 @@ class Backups(base.ManagerWithFind):
         url = "/backups/%s" % base.getid(backup)
         resp, body = self.api.client.delete(url)
         common.check_for_exceptions(resp, body, url)
+
+    def download_metadata(self, backup, dest):
+        if not os.path.isdir(dest):
+            raise Exception(
+                "Selected destination location is not a directory: %s" % dest)
+
+        object_file_name = backup.filename
+        meta_file_name = object_file_name + os.path.extsep + 'metadata'
+        meta_file = os.path.abspath(os.path.join(dest, meta_file_name))
+        with open(meta_file, 'w') as fp:
+            json.dump(backup._info, fp, sort_keys=True)
+
+        return meta_file
+
+    def download_data(self, backup, dest):
+        if not os.path.isdir(dest):
+            raise Exception(
+                "Selected destination location is not a directory: %s" % dest)
+
+        object_file_name = backup.filename
+        container = backup.container
+        object_file = os.path.abspath(os.path.join(dest, object_file_name))
+        with swift_service.SwiftService() as swift:
+            for item in swift.download(
+                    container, [object_file_name],
+                    {'checksum': True, 'out_file': object_file}):
+                if not item.get('success'):
+                    raise Exception(
+                        "Failed to download swift object: %s/%s"
+                        % (container, object_file_name))
+
+        return object_file
+
+    def upload_metadata(self, src):
+        with open(src, 'r') as fp:
+            metadata = json.load(fp)
+
+        if 'description' in metadata and metadata['description'] is None:
+            del metadata['description']
+
+        return self.import_from_metadata(metadata)
+
+    def import_from_metadata(self, metadata):
+        """Create a new backup from the given metadata."""
+        body = {
+            "backup": {
+                "meta": metadata,
+            }
+        }
+
+        return self._create("/backups", body, "backup")
+
+    def upload_data(self, src, container):
+        with swift_service.SwiftService() as swift:
+            for item in swift.upload(
+                    container, [swift_service.SwiftUploadObject(
+                        src, object_name=os.path.basename(src))],
+                    {'segment_size': 2147483648, 'use_slo': True}):
+                if not item.get('success'):
+                    raise Exception(
+                        "Failed to upload file into swift: %s" % src)
 
     backup_create_workflow = "trove.backup_create"
 
